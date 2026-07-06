@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>쿠팡 로켓그로스 매출·이익 계산기</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>쿠팡 로켓그로스 매출·이익 계산기</h1>
+    <p class="sub">인사이트 · 광고 리포트 엑셀을 넣으면 상품별 매출·광고비·마진을 자동 산출합니다. 모든 계산은 이 브라우저 안에서만 이뤄지며 파일은 외부로 전송되지 않습니다.</p>
+  </header>
+
+  <main>
+    <!-- 마진표 상태 -->
+    <section class="card" id="marginCard">
+      <div class="card-head">
+        <h2>1. 마진표</h2>
+        <span class="badge" id="marginBadge">없음</span>
+      </div>
+      <p class="hint">등록상품ID별 <b>결제받는단가·마진</b>이 적힌 엑셀입니다. 한 번 올리면 이 브라우저에 기억되어, 이후에는 다시 올릴 필요가 없습니다.</p>
+      <div class="row">
+        <label class="btn small">
+          마진표 올리기/교체
+          <input type="file" id="marginInput" accept=".xlsx,.xls" hidden />
+        </label>
+        <button class="btn small ghost" id="marginClear">마진표 지우기</button>
+      </div>
+      <div id="marginInfo" class="mono small muted"></div>
+    </section>
+
+    <!-- 일일 파일 드롭 -->
+    <section class="card">
+      <div class="card-head">
+        <h2>2. 인사이트 + 광고 리포트</h2>
+      </div>
+      <p class="hint">두 파일을 아래에 드래그하세요. 파일 종류(인사이트/광고)는 <b>자동 인식</b>됩니다. 날짜는 광고 리포트 파일명에서 읽습니다.</p>
+      <div id="dropzone" class="dropzone">
+        <div class="dz-inner">
+          <div class="dz-icon">📄</div>
+          <div>여기에 엑셀 파일을 드래그하거나 <label class="link">파일 선택<input type="file" id="dailyInput" accept=".xlsx,.xls" multiple hidden /></label></div>
+          <div class="small muted">인사이트 · 광고 리포트 (한꺼번에 여러 개 가능)</div>
+        </div>
+      </div>
+      <div id="stagedFiles" class="staged"></div>
+      <div class="row">
+        <button class="btn" id="calcBtn" disabled>계산하기</button>
+        <span id="dateLabel" class="pill" hidden></span>
+      </div>
+    </section>
+
+    <!-- 결과 -->
+    <section class="card" id="resultCard" hidden>
+      <div class="card-head">
+        <h2>3. 결과</h2>
+        <div class="row">
+          <button class="btn small" id="downloadBtn">엑셀 다운로드</button>
+          <button class="btn small ghost" id="clearAllBtn">누적 초기화</button>
+        </div>
+      </div>
+      <div id="warnings"></div>
+      <div class="table-wrap">
+        <table id="resultTable"></table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span>브라우저 내에서만 동작 · 데이터 외부 전송 없음</span>
+  </footer>
+
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

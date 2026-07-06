@@ -1,0 +1,68 @@
+:root{
+  --bg:#0f1115; --card:#171a21; --card2:#1e222b; --line:#2a2f3a;
+  --text:#e8eaed; --muted:#9aa3b2; --brand:#3b82f6; --brand2:#2563eb;
+  --good:#22c55e; --bad:#ef4444; --warn:#f59e0b;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:"Malgun Gothic","맑은 고딕",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  line-height:1.5;
+}
+.topbar{padding:28px 20px 8px; max-width:1100px; margin:0 auto}
+.topbar h1{margin:0 0 6px; font-size:22px}
+.sub{margin:0; color:var(--muted); font-size:13px; max-width:760px}
+main{max-width:1100px; margin:0 auto; padding:12px 20px 40px; display:flex; flex-direction:column; gap:16px}
+.card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px}
+.card-head{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px}
+.card-head h2{font-size:16px; margin:0}
+.hint{color:var(--muted); font-size:13px; margin:4px 0 12px}
+.row{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+.btn{
+  background:var(--brand); color:#fff; border:0; border-radius:10px;
+  padding:11px 18px; font-size:14px; cursor:pointer; font-weight:600;
+}
+.btn:hover{background:var(--brand2)}
+.btn:disabled{opacity:.45; cursor:not-allowed}
+.btn.small{padding:8px 13px; font-size:13px}
+.btn.ghost{background:transparent; border:1px solid var(--line); color:var(--muted); font-weight:500}
+.btn.ghost:hover{background:var(--card2); color:var(--text)}
+.link{color:var(--brand); cursor:pointer; text-decoration:underline}
+.badge{font-size:12px; padding:3px 10px; border-radius:999px; background:var(--card2); color:var(--muted); border:1px solid var(--line)}
+.badge.ok{background:rgba(34,197,94,.12); color:var(--good); border-color:transparent}
+.pill{font-size:13px; padding:5px 12px; border-radius:999px; background:var(--card2); border:1px solid var(--line)}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.mono{font-family:ui-monospace,Consolas,monospace}
+.dropzone{
+  border:2px dashed var(--line); border-radius:12px; padding:30px 16px;
+  text-align:center; color:var(--muted); transition:.15s; background:var(--card2);
+}
+.dropzone.drag{border-color:var(--brand); background:rgba(59,130,246,.08); color:var(--text)}
+.dz-inner{display:flex; flex-direction:column; gap:6px; align-items:center}
+.dz-icon{font-size:30px}
+.staged{display:flex; flex-direction:column; gap:6px; margin:12px 0}
+.staged .item{display:flex; align-items:center; gap:10px; font-size:13px; background:var(--card2); border:1px solid var(--line); border-radius:8px; padding:8px 12px}
+.staged .tag{font-size:11px; font-weight:700; padding:2px 8px; border-radius:6px}
+.tag.ins{background:rgba(59,130,246,.15); color:#93c5fd}
+.tag.ad{background:rgba(245,158,11,.15); color:#fcd34d}
+.tag.margin{background:rgba(34,197,94,.15); color:#86efac}
+.tag.unknown{background:rgba(239,68,68,.15); color:#fca5a5}
+.staged .x{margin-left:auto; cursor:pointer; color:var(--muted)}
+.staged .x:hover{color:var(--bad)}
+.table-wrap{overflow-x:auto; margin-top:12px}
+table{border-collapse:collapse; width:100%; font-size:13px; white-space:nowrap}
+th,td{padding:8px 10px; border-bottom:1px solid var(--line); text-align:right}
+th:nth-child(-n+4),td:nth-child(-n+4){text-align:left}
+thead th{position:sticky; top:0; background:var(--card2); color:var(--muted); font-weight:600; z-index:1}
+tbody tr:hover{background:var(--card2)}
+tr.total{font-weight:700; background:var(--card2)}
+tr.total td{border-top:2px solid var(--line)}
+td.pos{color:var(--good)}
+td.neg{color:var(--bad)}
+.warn-box{border-radius:10px; padding:12px 14px; margin-bottom:10px; font-size:13px; border:1px solid}
+.warn-box.warn{background:rgba(245,158,11,.08); border-color:rgba(245,158,11,.3)}
+.warn-box.info{background:rgba(59,130,246,.08); border-color:rgba(59,130,246,.3)}
+.warn-box h4{margin:0 0 6px; font-size:13px}
+.warn-box ul{margin:4px 0 0; padding-left:18px; color:var(--muted)}
+.foot{max-width:1100px; margin:0 auto; padding:0 20px 30px; color:var(--muted); font-size:12px}

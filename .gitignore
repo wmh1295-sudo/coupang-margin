@@ -1,0 +1,5 @@
+# 업무 데이터는 저장소에 올리지 않습니다
+*.xlsx
+*.xls
+node_modules/
+.DS_Store

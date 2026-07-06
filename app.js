@@ -1,0 +1,444 @@
+/* 쿠팡 로켓그로스 매출·이익 계산기 — 전량 브라우저 내 처리 */
+"use strict";
+
+/* ---------- 유틸 ---------- */
+const $ = (s) => document.querySelector(s);
+const norm = (s) => (s == null ? "" : String(s).replace(/\s+/g, "").trim());
+function idStr(v) {
+  if (v == null || v === "") return "";
+  if (typeof v === "number") return String(Math.trunc(v));
+  let s = String(v).trim();
+  if (/^\d+\.0+$/.test(s)) s = s.replace(/\.0+$/, "");
+  return s;
+}
+function num(v) {
+  if (v == null || v === "") return 0;
+  if (typeof v === "number") return v;
+  const n = parseFloat(String(v).replace(/[, ]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+const won = (n) => Math.round(n).toLocaleString("ko-KR");
+function pct(n) {
+  if (!isFinite(n)) return "-";
+  return (n * 100).toFixed(1) + "%";
+}
+
+/* 시트 배열에서 지정 헤더들을 모두 포함하는 시트를 찾아 {header,rows} 반환 */
+function findSheet(wb, required) {
+  for (const name of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
+    if (!rows.length) continue;
+    // 헤더가 첫 행이 아닐 수 있으니 상위 5행 탐색
+    for (let hr = 0; hr < Math.min(5, rows.length); hr++) {
+      const header = (rows[hr] || []).map(norm);
+      if (required.every((req) => header.includes(norm(req)))) {
+        return { header: rows[hr], rows: rows.slice(hr + 1) };
+      }
+    }
+  }
+  return null;
+}
+function colIndex(header, candidates) {
+  const H = header.map(norm);
+  for (const c of candidates) {
+    const i = H.indexOf(norm(c));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+/* ---------- 파일 종류 자동 인식 ---------- */
+function classify(wb) {
+  // 마진표를 먼저 판별 (마진 워크북 안에 인사이트 형태 시트가 섞여 있을 수 있음)
+  if (findSheet(wb, ["결제받는단가", "마진"])) return "margin";
+  if (findSheet(wb, ["광고집행 옵션ID", "광고비"])) return "ad";
+  if (findSheet(wb, ["옵션 ID", "등록상품ID", "매출(원)"])) return "insight";
+  return "unknown";
+}
+
+/* ---------- 파서 ---------- */
+function parseMargin(wb) {
+  const s = findSheet(wb, ["결제받는단가", "마진"]);
+  if (!s) throw new Error("마진표 형식을 인식하지 못했습니다.");
+  const H = s.header;
+  const cId = colIndex(H, ["등록 상품 아이디", "등록상품아이디", "등록상품ID"]);
+  const cSettle = colIndex(H, ["결제받는단가"]);
+  const cMargin = colIndex(H, ["마진"]);
+  const cGroup = colIndex(H, ["상품 구분", "상품구분"]);
+  const cName = colIndex(H, ["등록 상품명", "등록상품명", "상품명"]);
+  const map = {};
+  for (const r of s.rows) {
+    const id = idStr(r[cId]);
+    if (!id) continue;
+    const mv = r[cMargin];
+    if (mv == null || mv === "") continue; // 마진 미기입 행은 제외
+    map[id] = {
+      group: cGroup >= 0 ? (r[cGroup] || "") : "",
+      name: cName >= 0 ? (r[cName] || "") : "",
+      settle: num(r[cSettle]),
+      margin: num(mv),
+    };
+  }
+  return map; // regId -> {group,name,settle,margin(개당)}
+}
+
+function parseInsight(wb) {
+  const s = findSheet(wb, ["옵션 ID", "등록상품ID", "매출(원)"]);
+  if (!s) throw new Error("인사이트 파일 형식을 인식하지 못했습니다.");
+  const H = s.header;
+  const cOpt = colIndex(H, ["옵션 ID", "옵션ID"]);
+  const cReg = colIndex(H, ["등록상품ID", "등록상품아이디"]);
+  const cName = colIndex(H, ["상품명"]);
+  const cQty = colIndex(H, ["판매량"]);
+  const cRev = colIndex(H, ["매출(원)"]);
+  const opt2reg = {};
+  const regAgg = {}; // regId -> {qty,rev,name}
+  for (const r of s.rows) {
+    const opt = idStr(r[cOpt]);
+    const reg = idStr(r[cReg]);
+    if (opt && reg) opt2reg[opt] = reg;
+    if (!reg) continue;
+    if (!regAgg[reg]) regAgg[reg] = { qty: 0, rev: 0, name: cName >= 0 ? (r[cName] || "") : "" };
+    regAgg[reg].qty += num(r[cQty]);
+    regAgg[reg].rev += num(r[cRev]);
+  }
+  return { opt2reg, regAgg };
+}
+
+function parseAd(wb) {
+  const s = findSheet(wb, ["광고집행 옵션ID", "광고비"]);
+  if (!s) throw new Error("광고 리포트 형식을 인식하지 못했습니다.");
+  const H = s.header;
+  const cOpt = colIndex(H, ["광고집행 옵션ID", "광고집행옵션ID"]);
+  const cCost = colIndex(H, ["광고비"]);
+  const byOpt = {};
+  for (const r of s.rows) {
+    const opt = idStr(r[cOpt]);
+    if (!opt) continue;
+    byOpt[opt] = (byOpt[opt] || 0) + num(r[cCost]);
+  }
+  return byOpt; // 광고집행 옵션ID -> 광고비합
+}
+
+/* 파일명에서 날짜(YYYYMMDD) 추출 → YYYY-MM-DD */
+function dateFromName(fname) {
+  const m = fname.match(/(\d{8})/g);
+  if (m && m.length) {
+    const d = m[0];
+    return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+  }
+  return null;
+}
+
+/* ---------- 계산 ---------- */
+function computeDay(date, marginMap, insight, adByOpt) {
+  const { opt2reg, regAgg } = insight;
+
+  // 광고비를 등록상품ID로 매핑
+  const adByReg = {};
+  const unmappedAd = []; // {opt,cost}
+  for (const [opt, cost] of Object.entries(adByOpt)) {
+    const reg = opt2reg[opt];
+    if (!reg) {
+      if (cost > 0) unmappedAd.push({ opt, cost });
+      continue;
+    }
+    adByReg[reg] = (adByReg[reg] || 0) + cost;
+  }
+
+  // 결과 행: 마진 기입 상품 중 (판매 있음 or 광고비 있음)
+  const rows = [];
+  const regs = new Set([...Object.keys(marginMap)]);
+  for (const reg of regs) {
+    const m = marginMap[reg];
+    const agg = regAgg[reg] || { qty: 0, rev: 0, name: "" };
+    const adCost = adByReg[reg] || 0;
+    if (agg.qty === 0 && adCost === 0) continue; // 판매·광고 모두 없음 → 생략
+    const qty = agg.qty;
+    const insightRev = agg.rev;
+    const settleRev = m.settle * qty;
+    const marginBefore = m.margin * qty;
+    const netProfit = marginBefore - adCost;
+    rows.push({
+      date, regId: reg,
+      group: m.group || "",
+      name: m.name || agg.name || "",
+      qty, insightRev, settleRev, adCost, marginBefore, netProfit,
+      netRate: settleRev > 0 ? netProfit / settleRev : NaN,
+    });
+  }
+
+  // 경고: 판매됐으나 마진 미기입
+  const soldNoMargin = [];
+  for (const [reg, agg] of Object.entries(regAgg)) {
+    if (agg.qty > 0 && !marginMap[reg]) {
+      soldNoMargin.push({ regId: reg, name: agg.name, qty: agg.qty, rev: agg.rev });
+    }
+  }
+  soldNoMargin.sort((a, b) => b.rev - a.rev);
+  rows.sort((a, b) => b.settleRev - a.settleRev);
+  return { rows, soldNoMargin, unmappedAd };
+}
+
+/* ---------- 상태 (localStorage) ---------- */
+const LS_MARGIN = "cm_margin_v1";
+const LS_DAYS = "cm_days_v1";
+function loadMargin() {
+  try { return JSON.parse(localStorage.getItem(LS_MARGIN) || "null"); } catch { return null; }
+}
+function saveMargin(map, meta) {
+  localStorage.setItem(LS_MARGIN, JSON.stringify({ map, meta }));
+}
+function loadDays() {
+  try { return JSON.parse(localStorage.getItem(LS_DAYS) || "{}"); } catch { return {}; }
+}
+function saveDays(days) { localStorage.setItem(LS_DAYS, JSON.stringify(days)); }
+
+/* ---------- UI ---------- */
+let staged = []; // {file, wb, kind}
+let marginState = loadMargin(); // {map, meta}
+
+function renderMarginBadge() {
+  const badge = $("#marginBadge"), info = $("#marginInfo");
+  if (marginState && marginState.map) {
+    const n = Object.keys(marginState.map).length;
+    badge.textContent = `기억됨 · ${n}개 상품`;
+    badge.className = "badge ok";
+    info.textContent = marginState.meta ? `파일: ${marginState.meta.name}` : "";
+  } else {
+    badge.textContent = "없음";
+    badge.className = "badge";
+    info.textContent = "마진표를 아직 올리지 않았습니다.";
+  }
+}
+
+async function readWorkbook(file) {
+  const buf = await file.arrayBuffer();
+  return XLSX.read(buf, { type: "array" });
+}
+
+async function handleMarginFile(file) {
+  try {
+    const wb = await readWorkbook(file);
+    const map = parseMargin(wb);
+    if (!Object.keys(map).length) { alert("마진이 기입된 행을 찾지 못했습니다."); return; }
+    marginState = { map, meta: { name: file.name } };
+    saveMargin(map, marginState.meta);
+    renderMarginBadge();
+  } catch (e) { alert("마진표 처리 오류: " + e.message); }
+}
+
+async function stageDaily(files) {
+  for (const file of files) {
+    try {
+      const wb = await readWorkbook(file);
+      let kind = classify(wb);
+      if (kind === "margin") { await handleMarginFile(file); continue; }
+      staged.push({ file, wb, kind });
+    } catch (e) { alert(`${file.name} 읽기 오류: ${e.message}`); }
+  }
+  renderStaged();
+}
+
+function renderStaged() {
+  const box = $("#stagedFiles");
+  box.innerHTML = "";
+  const tagText = { insight: "인사이트", ad: "광고", unknown: "인식 실패" };
+  staged.forEach((s, i) => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.innerHTML = `<span class="tag ${s.kind}">${tagText[s.kind]}</span>
+      <span>${s.file.name}</span><span class="x" data-i="${i}">✕</span>`;
+    box.appendChild(div);
+  });
+  box.querySelectorAll(".x").forEach((x) =>
+    x.addEventListener("click", () => { staged.splice(+x.dataset.i, 1); renderStaged(); }));
+
+  const ins = staged.find((s) => s.kind === "insight");
+  const ad = staged.find((s) => s.kind === "ad");
+  const dateEl = $("#dateLabel");
+  let date = ad ? dateFromName(ad.file.name) : null;
+  if (date) { dateEl.hidden = false; dateEl.textContent = `날짜: ${date}`; }
+  else dateEl.hidden = true;
+
+  $("#calcBtn").disabled = !(ins && ad && marginState && marginState.map);
+}
+
+function calculate() {
+  const insFile = staged.find((s) => s.kind === "insight");
+  const adFile = staged.find((s) => s.kind === "ad");
+  if (!insFile || !adFile) { alert("인사이트와 광고 리포트 파일이 모두 필요합니다."); return; }
+  if (!marginState || !marginState.map) { alert("먼저 마진표를 올려주세요."); return; }
+
+  let date = dateFromName(adFile.file.name) || dateFromName(insFile.file.name) ||
+    prompt("파일명에서 날짜를 찾지 못했습니다. 날짜를 입력하세요 (YYYY-MM-DD):", "");
+  if (!date) return;
+
+  let insight, adByOpt;
+  try { insight = parseInsight(insFile.wb); adByOpt = parseAd(adFile.wb); }
+  catch (e) { alert("계산 오류: " + e.message); return; }
+
+  const res = computeDay(date, marginState.map, insight, adByOpt);
+
+  // 누적 저장
+  const days = loadDays();
+  days[date] = res;
+  saveDays(days);
+
+  staged = [];
+  renderStaged();
+  renderResults();
+}
+
+function renderResults() {
+  const days = loadDays();
+  const dates = Object.keys(days).sort();
+  if (!dates.length) { $("#resultCard").hidden = true; return; }
+  $("#resultCard").hidden = false;
+
+  // 모든 행 합치기
+  let allRows = [];
+  let soldNoMargin = [];
+  let unmappedAd = [];
+  for (const d of dates) {
+    allRows = allRows.concat(days[d].rows || []);
+    (days[d].soldNoMargin || []).forEach((x) => soldNoMargin.push({ ...x, date: d }));
+    (days[d].unmappedAd || []).forEach((x) => unmappedAd.push({ ...x, date: d }));
+  }
+  allRows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.settleRev - a.settleRev));
+
+  // 경고
+  const warn = $("#warnings");
+  warn.innerHTML = "";
+  if (soldNoMargin.length) {
+    const items = soldNoMargin.slice(0, 30).map((x) =>
+      `<li>[${x.date}] ${x.name} (ID ${x.regId}) · ${x.qty}개 · 매출 ${won(x.rev)}원</li>`).join("");
+    warn.innerHTML += `<div class="warn-box warn"><h4>⚠️ 판매됐지만 마진 미기입 상품 ${soldNoMargin.length}건 (마진표에 추가하면 이익 계산에 포함됩니다)</h4><ul>${items}</ul></div>`;
+  }
+  if (unmappedAd.length) {
+    const tot = unmappedAd.reduce((s, x) => s + x.cost, 0);
+    const items = unmappedAd.slice(0, 20).map((x) =>
+      `<li>[${x.date}] 광고옵션ID ${x.opt} · 광고비 ${won(x.cost)}원</li>`).join("");
+    warn.innerHTML += `<div class="warn-box warn"><h4>⚠️ 인사이트에 없어 매칭되지 않은 광고비 ${won(tot)}원</h4><ul>${items}</ul></div>`;
+  }
+
+  // 테이블
+  const cols = [
+    ["날짜", "date"], ["상품구분", "group"], ["상품명", "name"], ["등록상품ID", "regId"],
+    ["판매수량", "qty"], ["인사이트매출", "insightRev"], ["정산매출", "settleRev"],
+    ["사용광고비", "adCost"], ["마진(광고전)", "marginBefore"], ["순이익", "netProfit"], ["순이익률", "netRate"],
+  ];
+  const t = $("#resultTable");
+  const thead = `<thead><tr>${cols.map((c) => `<th>${c[0]}</th>`).join("")}</tr></thead>`;
+  const money = new Set(["insightRev", "settleRev", "adCost", "marginBefore", "netProfit"]);
+  const body = allRows.map((r) => {
+    const tds = cols.map(([, k]) => {
+      if (k === "netRate") return `<td>${pct(r.netRate)}</td>`;
+      if (k === "qty") return `<td>${won(r.qty)}</td>`;
+      if (money.has(k)) {
+        const cls = k === "netProfit" ? (r.netProfit >= 0 ? "pos" : "neg") : "";
+        return `<td class="${cls}">${won(r[k])}</td>`;
+      }
+      return `<td>${r[k] == null ? "" : r[k]}</td>`;
+    });
+    return `<tr>${tds.join("")}</tr>`;
+  }).join("");
+
+  // 합계
+  const sum = (k) => allRows.reduce((s, r) => s + (r[k] || 0), 0);
+  const totNet = sum("netProfit"), totSettle = sum("settleRev");
+  const totalCells = cols.map(([, k]) => {
+    if (k === "date") return `<td>합계 (${dates.length}일)</td>`;
+    if (k === "group" || k === "name" || k === "regId") return `<td></td>`;
+    if (k === "netRate") return `<td>${pct(totSettle > 0 ? totNet / totSettle : NaN)}</td>`;
+    if (k === "qty") return `<td>${won(sum("qty"))}</td>`;
+    const cls = k === "netProfit" ? (totNet >= 0 ? "pos" : "neg") : "";
+    return `<td class="${cls}">${won(sum(k))}</td>`;
+  }).join("");
+  const foot = `<tr class="total">${totalCells}</tr>`;
+
+  t.innerHTML = thead + `<tbody>${body}${foot}</tbody>`;
+}
+
+/* ---------- 엑셀 다운로드 ---------- */
+function downloadExcel() {
+  const days = loadDays();
+  const dates = Object.keys(days).sort();
+  if (!dates.length) return;
+  let rows = [];
+  for (const d of dates) rows = rows.concat(days[d].rows || []);
+  rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.settleRev - a.settleRev));
+
+  const header = ["날짜", "상품구분", "상품명", "등록상품ID", "판매수량",
+    "인사이트매출", "정산매출", "사용광고비", "마진(광고전)", "순이익", "순이익률"];
+  const aoa = [header];
+  for (const r of rows) {
+    aoa.push([r.date, r.group, r.name, r.regId, r.qty,
+      Math.round(r.insightRev), Math.round(r.settleRev), Math.round(r.adCost),
+      Math.round(r.marginBefore), Math.round(r.netProfit),
+      isFinite(r.netRate) ? +(r.netRate).toFixed(4) : ""]);
+  }
+  const sum = (k) => rows.reduce((s, r) => s + (r[k] || 0), 0);
+  const tNet = sum("netProfit"), tSettle = sum("settleRev");
+  aoa.push(["합계", "", "", "", sum("qty"),
+    Math.round(sum("insightRev")), Math.round(tSettle), Math.round(sum("adCost")),
+    Math.round(sum("marginBefore")), Math.round(tNet),
+    tSettle > 0 ? +(tNet / tSettle).toFixed(4) : ""]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [{ wch: 11 }, { wch: 12 }, { wch: 34 }, { wch: 13 }, { wch: 9 },
+    { wch: 13 }, { wch: 13 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 9 }];
+  // 숫자 서식
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  for (let R = 1; R <= range.e.r; R++) {
+    for (let C = 5; C <= 9; C++) {
+      const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (cell && typeof cell.v === "number") cell.z = "#,##0";
+    }
+    const pc = ws[XLSX.utils.encode_cell({ r: R, c: 10 })];
+    if (pc && typeof pc.v === "number") pc.z = "0.0%";
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "이익집계");
+  const fname = dates.length === 1 ? `쿠팡이익_${dates[0]}.xlsx` : `쿠팡이익_${dates[0]}_${dates[dates.length - 1]}.xlsx`;
+  XLSX.writeFile(wb, fname);
+}
+
+/* ---------- 이벤트 바인딩 ---------- */
+function init() {
+  renderMarginBadge();
+  renderResults();
+
+  $("#marginInput").addEventListener("change", (e) => {
+    if (e.target.files[0]) handleMarginFile(e.target.files[0]);
+    e.target.value = "";
+  });
+  $("#marginClear").addEventListener("click", () => {
+    if (!confirm("기억된 마진표를 지울까요?")) return;
+    localStorage.removeItem(LS_MARGIN); marginState = null; renderMarginBadge(); renderStaged();
+  });
+
+  const dz = $("#dropzone");
+  ["dragenter", "dragover"].forEach((ev) => dz.addEventListener(ev, (e) => {
+    e.preventDefault(); dz.classList.add("drag");
+  }));
+  ["dragleave", "drop"].forEach((ev) => dz.addEventListener(ev, (e) => {
+    e.preventDefault(); dz.classList.remove("drag");
+  }));
+  dz.addEventListener("drop", (e) => {
+    const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.xlsx?$/i.test(f.name));
+    if (files.length) stageDaily(files);
+  });
+  $("#dailyInput").addEventListener("change", (e) => {
+    if (e.target.files.length) stageDaily([...e.target.files]);
+    e.target.value = "";
+  });
+
+  $("#calcBtn").addEventListener("click", calculate);
+  $("#downloadBtn").addEventListener("click", downloadExcel);
+  $("#clearAllBtn").addEventListener("click", () => {
+    if (!confirm("누적된 모든 날짜 결과를 지울까요? (마진표는 유지됩니다)")) return;
+    localStorage.removeItem(LS_DAYS); renderResults();
+  });
+}
+init();
