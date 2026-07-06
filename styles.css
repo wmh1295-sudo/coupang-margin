@@ -63,6 +63,10 @@ tr.total{font-weight:700; background:var(--card2)}
 tr.total td{border-top:2px solid var(--line)}
 td.pos{color:var(--good)}
 td.neg{color:var(--bad)}
+.acc-status{background:rgba(59,130,246,.1); border:1px solid rgba(59,130,246,.3); border-radius:10px;
+  padding:10px 14px; font-size:13.5px; margin-bottom:12px}
+.acc-status b{color:#93c5fd}
+.acc-hint{color:var(--muted); font-size:12px}
 .warn-box{border-radius:10px; padding:12px 14px; margin-bottom:10px; font-size:13px; border:1px solid}
 .warn-box.warn{background:rgba(245,158,11,.08); border-color:rgba(245,158,11,.3)}
 .warn-box.info{background:rgba(59,130,246,.08); border-color:rgba(59,130,246,.3)}

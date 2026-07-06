@@ -66,9 +66,44 @@ function colIndex(header, candidates) {
 function classify(wb) {
   // 마진표를 먼저 판별 (마진 워크북 안에 인사이트 형태 시트가 섞여 있을 수 있음)
   if (findSheet(wb, ["결제받는단가", "마진"])) return "margin";
+  // 이 앱이 만든 결과(누적) 엑셀 — 다시 넣으면 이어서 기록
+  if (findSheet(wb, ["정산매출", "마진(광고전)", "순이익"])) return "result";
   if (findSheet(wb, ["광고집행 옵션ID", "광고비"])) return "ad";
   if (findSheet(wb, ["옵션 ID", "등록상품ID", "매출(원)"])) return "insight";
   return "unknown";
+}
+
+/* 예전에 다운로드한 결과(누적) 엑셀을 다시 읽어 일자별 데이터로 복원 */
+function parseResult(wb) {
+  const s = findSheet(wb, ["정산매출", "마진(광고전)", "순이익"]);
+  if (!s) throw new Error("결과 엑셀 형식을 인식하지 못했습니다.");
+  const H = s.header;
+  const ci = {
+    date: colIndex(H, ["날짜"]), group: colIndex(H, ["상품구분"]),
+    name: colIndex(H, ["상품명"]), regId: colIndex(H, ["등록상품ID"]),
+    qty: colIndex(H, ["판매수량"]), insightRev: colIndex(H, ["인사이트매출"]),
+    settleRev: colIndex(H, ["정산매출"]), adCost: colIndex(H, ["사용광고비"]),
+    marginBefore: colIndex(H, ["마진(광고전)"]), netProfit: colIndex(H, ["순이익"]),
+  };
+  const days = {};
+  for (const r of s.rows) {
+    const date = r[ci.date];
+    if (!date) continue;
+    const ds = String(date).trim();
+    if (ds === "합계" || !/^\d{4}-\d{2}-\d{2}$/.test(ds)) continue; // 합계행·잡행 제외
+    if (!days[ds]) days[ds] = { rows: [], soldNoMargin: [], unmappedAd: [] };
+    const settleRev = num(r[ci.settleRev]);
+    const netProfit = num(r[ci.netProfit]);
+    days[ds].rows.push({
+      date: ds, regId: idStr(r[ci.regId]),
+      group: r[ci.group] || "", name: r[ci.name] || "",
+      qty: num(r[ci.qty]), insightRev: num(r[ci.insightRev]),
+      settleRev, adCost: num(r[ci.adCost]),
+      marginBefore: num(r[ci.marginBefore]), netProfit,
+      netRate: settleRev > 0 ? netProfit / settleRev : NaN,
+    });
+  }
+  return days;
 }
 
 /* ---------- 파서 ---------- */
@@ -252,10 +287,26 @@ async function stageDaily(files) {
       const wb = await readWorkbook(file);
       let kind = classify(wb);
       if (kind === "margin") { await handleMarginFile(file); continue; }
+      if (kind === "result") { importResult(wb, file.name); continue; }
       staged.push({ file, wb, kind });
     } catch (e) { alert(`${file.name} 읽기 오류: ${e.message}`); }
   }
   renderStaged();
+}
+
+/* 결과 엑셀을 누적 데이터에 병합 */
+function importResult(wb, fname) {
+  let imported;
+  try { imported = parseResult(wb); }
+  catch (e) { alert("불러오기 오류: " + e.message); return; }
+  const dates = Object.keys(imported);
+  if (!dates.length) { alert(`${fname}: 불러올 날짜 데이터가 없습니다.`); return; }
+  const days = loadDays();
+  for (const d of dates) days[d] = imported[d]; // 같은 날짜는 파일 내용으로 갱신
+  saveDays(days);
+  renderResults();
+  const sorted = dates.slice().sort();
+  alert(`이전 누적본에서 ${dates.length}일치를 불러왔습니다. (${sorted[0]} ~ ${sorted[sorted.length - 1]})`);
 }
 
 function renderStaged() {
@@ -313,6 +364,13 @@ function renderResults() {
   const dates = Object.keys(days).sort();
   if (!dates.length) { $("#resultCard").hidden = true; return; }
   $("#resultCard").hidden = false;
+
+  // 누적 현황
+  const acc = $("#accStatus");
+  if (acc) {
+    acc.innerHTML = `📅 현재 누적 <b>${dates.length}일</b> · ${dates[0]} ~ ${dates[dates.length - 1]}
+      <span class="acc-hint">— 매일 파일을 넣고 계산하면 자동으로 쌓입니다. 다운로드한 엑셀을 다시 드롭존에 넣으면 다른 PC에서도 이어서 기록됩니다.</span>`;
+  }
 
   // 모든 행 합치기
   let allRows = [];

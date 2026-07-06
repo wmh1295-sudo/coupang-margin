@@ -35,7 +35,8 @@
       <div class="card-head">
         <h2>2. 인사이트 + 광고 리포트</h2>
       </div>
-      <p class="hint">두 파일을 아래에 드래그하세요. 파일 종류(인사이트/광고)는 <b>자동 인식</b>됩니다. 날짜는 광고 리포트 파일명에서 읽습니다.</p>
+      <p class="hint">두 파일을 아래에 드래그하세요. 파일 종류(인사이트/광고)는 <b>자동 인식</b>됩니다. 날짜는 광고 리포트 파일명에서 읽습니다.<br>
+        여러 날을 모으려면 매일 파일을 넣고 계산하면 <b>자동으로 누적</b>됩니다. (이전에 다운로드한 결과 엑셀을 여기 넣으면 이어서 기록)</p>
       <div id="dropzone" class="dropzone">
         <div class="dz-inner">
           <div class="dz-icon">📄</div>
@@ -59,6 +60,7 @@
           <button class="btn small ghost" id="clearAllBtn">누적 초기화</button>
         </div>
       </div>
+      <div id="accStatus" class="acc-status"></div>
       <div id="warnings"></div>
       <div class="table-wrap">
         <table id="resultTable"></table>
