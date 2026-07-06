@@ -23,6 +23,21 @@ function pct(n) {
   return (n * 100).toFixed(1) + "%";
 }
 
+/* 컬럼 정의 & 계산식 (웹 툴팁 + 엑셀 메모 공용) */
+const COLUMN_DEFS = {
+  date: "날짜\n· 광고 리포트 파일명에서 읽은 판매 일자입니다.\n· 예: ..._20260705_...xlsx → 2026-07-05",
+  group: "상품구분\n· 마진표의 '상품 구분' 값을 그대로 표시합니다.",
+  name: "상품명\n· 마진표의 '등록 상품명'을 표시합니다. (없으면 인사이트 상품명)",
+  regId: "등록상품ID\n· 쿠팡 등록상품ID. 세 파일(인사이트·광고·마진)을 연결하는 매칭 기준 키입니다.",
+  qty: "판매수량\n· 인사이트의 옵션ID별 '판매량'을 등록상품ID 기준으로 합산한 값입니다.\n· = Σ 인사이트 판매량 (취소 반영된 순 판매량)",
+  insightRev: "인사이트매출\n· 쿠팡 인사이트의 '매출(원)' 합계입니다. (판매가 기준 총매출)\n· = Σ 인사이트 매출(원)",
+  settleRev: "정산매출\n· 쿠팡이 실제로 우리에게 정산해주는 금액 기준 매출입니다.\n· = 결제받는단가 × 판매수량",
+  adCost: "사용광고비\n· 광고 리포트의 '광고비'를, 광고집행 옵션ID를 인사이트의 옵션ID→등록상품ID 매핑으로 상품에 붙여 합산한 값입니다.\n· = Σ 광고비 (해당 상품의 모든 광고옵션·캠페인)",
+  marginBefore: "마진(광고전)\n· 광고비를 빼기 전, 상품 판매로 얻은 마진입니다.\n· = 개당마진 × 판매수량\n· (개당마진 = 결제받는단가 − 수입원가, 마진표 값)",
+  netProfit: "순이익\n· 광고비까지 반영한 최종 이익금입니다.\n· = 마진(광고전) − 사용광고비",
+  netRate: "순이익률\n· 정산매출 대비 순이익 비율입니다.\n· = 순이익 ÷ 정산매출",
+};
+
 /* 시트 배열에서 지정 헤더들을 모두 포함하는 시트를 찾아 {header,rows} 반환 */
 function findSheet(wb, required) {
   for (const name of wb.SheetNames) {
@@ -120,12 +135,15 @@ function parseAd(wb) {
   return byOpt; // 광고집행 옵션ID -> 광고비합
 }
 
-/* 파일명에서 날짜(YYYYMMDD) 추출 → YYYY-MM-DD */
+/* 파일명에서 날짜(YYYYMMDD) 추출 → YYYY-MM-DD
+   계정번호 등 8자리 숫자가 앞에 있을 수 있으므로 '유효한 날짜'만 채택 */
 function dateFromName(fname) {
-  const m = fname.match(/(\d{8})/g);
-  if (m && m.length) {
-    const d = m[0];
-    return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+  const all = fname.match(/\d{8}/g) || [];
+  for (const d of all) {
+    const y = +d.slice(0, 4), m = +d.slice(4, 6), day = +d.slice(6, 8);
+    if (y >= 2000 && y <= 2099 && m >= 1 && m <= 12 && day >= 1 && day <= 31) {
+      return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+    }
   }
   return null;
 }
@@ -329,7 +347,8 @@ function renderResults() {
     ["사용광고비", "adCost"], ["마진(광고전)", "marginBefore"], ["순이익", "netProfit"], ["순이익률", "netRate"],
   ];
   const t = $("#resultTable");
-  const thead = `<thead><tr>${cols.map((c) => `<th>${c[0]}</th>`).join("")}</tr></thead>`;
+  const thead = `<thead><tr>${cols.map((c) =>
+    `<th title="${COLUMN_DEFS[c[1]] || ""}">${c[0]}<span class="qmark">?</span></th>`).join("")}</tr></thead>`;
   const money = new Set(["insightRev", "settleRev", "adCost", "marginBefore", "netProfit"]);
   const body = allRows.map((r) => {
     const tds = cols.map(([, k]) => {
@@ -388,6 +407,16 @@ function downloadExcel() {
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws["!cols"] = [{ wch: 11 }, { wch: 12 }, { wch: 34 }, { wch: 13 }, { wch: 9 },
     { wch: 13 }, { wch: 13 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 9 }];
+
+  // 헤더 셀(1행)에 정의·계산식 메모 삽입 — 엑셀에서 셀에 마우스 올리면 표시
+  const keysByCol = ["date", "group", "name", "regId", "qty",
+    "insightRev", "settleRev", "adCost", "marginBefore", "netProfit", "netRate"];
+  keysByCol.forEach((k, c) => {
+    const addr = XLSX.utils.encode_cell({ r: 0, c });
+    if (!ws[addr]) return;
+    ws[addr].c = [{ a: "계산기", t: COLUMN_DEFS[k] || "" }];
+    ws[addr].c.hidden = true;
+  });
   // 숫자 서식
   const range = XLSX.utils.decode_range(ws["!ref"]);
   for (let R = 1; R <= range.e.r; R++) {
@@ -405,8 +434,24 @@ function downloadExcel() {
 }
 
 /* ---------- 이벤트 바인딩 ---------- */
+function renderLegend() {
+  const labels = {
+    date: "날짜", group: "상품구분", name: "상품명", regId: "등록상품ID", qty: "판매수량",
+    insightRev: "인사이트매출", settleRev: "정산매출", adCost: "사용광고비",
+    marginBefore: "마진(광고전)", netProfit: "순이익", netRate: "순이익률",
+  };
+  const body = $("#legendBody");
+  body.innerHTML = Object.keys(labels).map((k) => {
+    const lines = COLUMN_DEFS[k].split("\n");
+    const detail = lines.slice(1).map((l) => l.replace(/^·\s*/, "")).filter(Boolean)
+      .map((l) => `<div>${l}</div>`).join("");
+    return `<div class="legend-item"><b>${labels[k]}</b><div class="legend-detail">${detail}</div></div>`;
+  }).join("");
+}
+
 function init() {
   renderMarginBadge();
+  renderLegend();
   renderResults();
 
   $("#marginInput").addEventListener("change", (e) => {
