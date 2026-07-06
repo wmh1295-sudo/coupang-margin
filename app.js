@@ -66,8 +66,8 @@ function colIndex(header, candidates) {
 function classify(wb) {
   // 마진표를 먼저 판별 (마진 워크북 안에 인사이트 형태 시트가 섞여 있을 수 있음)
   if (findSheet(wb, ["결제받는단가", "마진"])) return "margin";
-  // 이 앱이 만든 결과(누적) 엑셀 — 다시 넣으면 이어서 기록
-  if (findSheet(wb, ["정산매출", "마진(광고전)", "순이익"])) return "result";
+  // 이 앱이 만든 결과(누적) 엑셀 — 다시 넣으면 이어서 기록 (상세 시트: 등록상품ID 포함)
+  if (findSheet(wb, ["등록상품ID", "정산매출", "마진(광고전)"])) return "result";
   if (findSheet(wb, ["광고집행 옵션ID", "광고비"])) return "ad";
   if (findSheet(wb, ["옵션 ID", "등록상품ID", "매출(원)"])) return "insight";
   return "unknown";
@@ -75,7 +75,7 @@ function classify(wb) {
 
 /* 예전에 다운로드한 결과(누적) 엑셀을 다시 읽어 일자별 데이터로 복원 */
 function parseResult(wb) {
-  const s = findSheet(wb, ["정산매출", "마진(광고전)", "순이익"]);
+  const s = findSheet(wb, ["등록상품ID", "정산매출", "마진(광고전)"]);
   if (!s) throw new Error("결과 엑셀 형식을 인식하지 못했습니다.");
   const H = s.header;
   const ci = {
@@ -233,9 +233,27 @@ function computeDay(date, marginMap, insight, adByOpt) {
   return { rows, soldNoMargin, unmappedAd };
 }
 
+/* ---------- 일별 요약 ---------- */
+// 한 날짜의 상세 rows → 요약 배열 [날짜,수량,인사이트매출,정산매출,광고비,마진(광고전),순이익,순이익률]
+function summaryRow(date, rows) {
+  const s = (k) => rows.reduce((a, r) => a + (r[k] || 0), 0);
+  const settle = s("settleRev"), net = s("netProfit");
+  return [date, Math.round(s("qty")), Math.round(s("insightRev")), Math.round(settle),
+    Math.round(s("adCost")), Math.round(s("marginBefore")), Math.round(net),
+    settle > 0 ? +(net / settle).toFixed(4) : ""];
+}
+// 상세 rows → 시트/엑셀용 배열
+function detailRow(r) {
+  return [r.date, r.group, r.name, r.regId, Math.round(r.qty),
+    Math.round(r.insightRev), Math.round(r.settleRev), Math.round(r.adCost),
+    Math.round(r.marginBefore), Math.round(r.netProfit),
+    isFinite(r.netRate) ? +r.netRate.toFixed(4) : ""];
+}
+
 /* ---------- 상태 (localStorage) ---------- */
 const LS_MARGIN = "cm_margin_v1";
 const LS_DAYS = "cm_days_v1";
+const LS_GSHEET = "cm_gsheet_v1";
 function loadMargin() {
   try { return JSON.parse(localStorage.getItem(LS_MARGIN) || "null"); } catch { return null; }
 }
@@ -246,6 +264,31 @@ function loadDays() {
   try { return JSON.parse(localStorage.getItem(LS_DAYS) || "{}"); } catch { return {}; }
 }
 function saveDays(days) { localStorage.setItem(LS_DAYS, JSON.stringify(days)); }
+function loadGSheet() {
+  try { return JSON.parse(localStorage.getItem(LS_GSHEET) || "null"); } catch { return null; }
+}
+function saveGSheet(cfg) { localStorage.setItem(LS_GSHEET, JSON.stringify(cfg)); }
+
+/* 구글시트(Apps Script 웹앱)로 전송 — no-cors(fire-and-forget) */
+async function pushToSheet(daysObj) {
+  const cfg = loadGSheet();
+  if (!cfg || !cfg.url) return { ok: false, reason: "미연결" };
+  const payload = { token: cfg.token || "", days: {} };
+  for (const [date, res] of Object.entries(daysObj)) {
+    const rows = (res.rows || []);
+    payload.days[date] = { summary: summaryRow(date, rows), rows: rows.map(detailRow) };
+  }
+  try {
+    await fetch(cfg.url, {
+      method: "POST", mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload),
+    });
+    return { ok: true, count: Object.keys(payload.days).length };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+}
 
 /* ---------- UI ---------- */
 let staged = []; // {file, wb, kind}
@@ -357,7 +400,17 @@ function calculate() {
   staged = [];
   renderStaged();
   renderResults();
+
+  // 구글시트 자동 저장
+  const cfg = loadGSheet();
+  if (cfg && cfg.url && cfg.auto) {
+    setGMsg(`구글시트로 ${date} 전송 중...`);
+    pushToSheet({ [date]: res }).then((r) => {
+      setGMsg(r.ok ? `구글시트에 ${date} 저장 요청 완료. 시트에서 확인하세요.` : `구글시트 전송 실패: ${r.reason}`);
+    });
+  }
 }
+function setGMsg(t) { const el = $("#gsheetMsg"); if (el) el.textContent = t; }
 
 function renderResults() {
   const days = loadDays();
@@ -485,8 +538,29 @@ function downloadExcel() {
     const pc = ws[XLSX.utils.encode_cell({ r: R, c: 10 })];
     if (pc && typeof pc.v === "number") pc.z = "0.0%";
   }
+  // 일별요약 시트
+  const sHeader = ["날짜", "판매수량", "인사이트매출", "정산매출", "사용광고비", "마진(광고전)", "순이익", "순이익률"];
+  const sAoa = [sHeader];
+  for (const d of dates) sAoa.push(summaryRow(d, days[d].rows || []));
+  const ssum = (i) => dates.reduce((a, d) => a + (summaryRow(d, days[d].rows || [])[i] || 0), 0);
+  const stotSettle = ssum(3), stotNet = ssum(6);
+  sAoa.push(["합계", ssum(1), ssum(2), stotSettle, ssum(4), ssum(5), stotNet,
+    stotSettle > 0 ? +(stotNet / stotSettle).toFixed(4) : ""]);
+  const wsSum = XLSX.utils.aoa_to_sheet(sAoa);
+  wsSum["!cols"] = [{ wch: 12 }, { wch: 9 }, { wch: 13 }, { wch: 13 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 9 }];
+  const sRange = XLSX.utils.decode_range(wsSum["!ref"]);
+  for (let R = 1; R <= sRange.e.r; R++) {
+    for (let C = 1; C <= 6; C++) {
+      const cell = wsSum[XLSX.utils.encode_cell({ r: R, c: C })];
+      if (cell && typeof cell.v === "number") cell.z = "#,##0";
+    }
+    const pc = wsSum[XLSX.utils.encode_cell({ r: R, c: 7 })];
+    if (pc && typeof pc.v === "number") pc.z = "0.0%";
+  }
+
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "이익집계");
+  XLSX.utils.book_append_sheet(wb, wsSum, "일별요약");
+  XLSX.utils.book_append_sheet(wb, ws, "상세");
   const fname = dates.length === 1 ? `쿠팡이익_${dates[0]}.xlsx` : `쿠팡이익_${dates[0]}_${dates[dates.length - 1]}.xlsx`;
   XLSX.writeFile(wb, fname);
 }
@@ -507,10 +581,44 @@ function renderLegend() {
   }).join("");
 }
 
+function renderGSheet() {
+  const cfg = loadGSheet();
+  const badge = $("#gsheetBadge");
+  if (cfg && cfg.url) {
+    $("#gsheetUrl").value = cfg.url;
+    $("#gsheetToken").value = cfg.token || "";
+    $("#gsheetAuto").checked = cfg.auto !== false;
+    badge.textContent = "연결됨"; badge.className = "badge ok";
+  } else {
+    badge.textContent = "미연결"; badge.className = "badge";
+  }
+}
+
 function init() {
   renderMarginBadge();
+  renderGSheet();
   renderLegend();
   renderResults();
+
+  $("#gsheetSave").addEventListener("click", () => {
+    const url = $("#gsheetUrl").value.trim();
+    if (!/^https:\/\/script\.google\.com\/.*\/exec$/.test(url)) {
+      alert("구글시트 웹 앱 URL 형식이 아닙니다. (https://script.google.com/.../exec)"); return;
+    }
+    saveGSheet({ url, token: $("#gsheetToken").value.trim(), auto: $("#gsheetAuto").checked });
+    renderGSheet(); setGMsg("연결 정보를 저장했습니다.");
+  });
+  $("#gsheetAuto").addEventListener("change", () => {
+    const cfg = loadGSheet(); if (cfg) { cfg.auto = $("#gsheetAuto").checked; saveGSheet(cfg); }
+  });
+  $("#gsheetPushAll").addEventListener("click", async () => {
+    const days = loadDays();
+    if (!Object.keys(days).length) { setGMsg("보낼 누적 데이터가 없습니다."); return; }
+    if (!loadGSheet()?.url) { alert("먼저 구글시트 주소를 저장하세요."); return; }
+    setGMsg("구글시트로 전체 전송 중...");
+    const r = await pushToSheet(days);
+    setGMsg(r.ok ? `${r.count}일치 전송 요청 완료. 구글시트에서 확인하세요.` : `전송 실패: ${r.reason}`);
+  });
 
   $("#marginInput").addEventListener("change", (e) => {
     if (e.target.files[0]) handleMarginFile(e.target.files[0]);

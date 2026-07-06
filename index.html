@@ -66,6 +66,26 @@
         <table id="resultTable"></table>
       </div>
     </section>
+    <!-- 구글시트 클라우드 저장 -->
+    <section class="card" id="gsheetCard">
+      <div class="card-head">
+        <h2>☁️ 구글시트 저장 (선택)</h2>
+        <span class="badge" id="gsheetBadge">미연결</span>
+      </div>
+      <p class="hint">연결하면 계산할 때마다 <b>본인 구글시트</b>에 자동 누적됩니다(일별요약·상세 탭). 설정 방법은
+        <a href="apps-script.gs" target="_blank" class="link">apps-script.gs</a> 파일 상단 주석을 참고하세요.</p>
+      <div class="gsheet-form">
+        <input type="text" id="gsheetUrl" class="txt" placeholder="구글시트 웹 앱 URL (https://script.google.com/.../exec)" />
+        <input type="text" id="gsheetToken" class="txt short" placeholder="토큰(선택)" />
+        <label class="chk"><input type="checkbox" id="gsheetAuto" checked /> 계산 시 자동 저장</label>
+      </div>
+      <div class="row">
+        <button class="btn small" id="gsheetSave">연결 저장</button>
+        <button class="btn small ghost" id="gsheetPushAll">구글시트로 전체 보내기</button>
+        <span id="gsheetMsg" class="small muted"></span>
+      </div>
+    </section>
+
     <!-- 계산식 설명 -->
     <section class="card">
       <details id="legend">

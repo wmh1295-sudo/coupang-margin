@@ -63,6 +63,11 @@ tr.total{font-weight:700; background:var(--card2)}
 tr.total td{border-top:2px solid var(--line)}
 td.pos{color:var(--good)}
 td.neg{color:var(--bad)}
+.gsheet-form{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px}
+.txt{flex:1; min-width:280px; background:var(--card2); border:1px solid var(--line); color:var(--text);
+  border-radius:8px; padding:9px 12px; font-size:13px}
+.txt.short{flex:0 0 140px; min-width:120px}
+.chk{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); white-space:nowrap}
 .acc-status{background:rgba(59,130,246,.1); border:1px solid rgba(59,130,246,.3); border-radius:10px;
   padding:10px 14px; font-size:13.5px; margin-bottom:12px}
 .acc-status b{color:#93c5fd}
