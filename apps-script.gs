@@ -43,6 +43,9 @@ function doPost(e) {
     });
     sortByDate_(sum);
     sortByDate_(det);
+    // 숫자 서식(쉼표·%) 적용
+    formatSheet_(sum, { comma: [2, 3, 4, 5, 6, 7], pct: 8 });
+    formatSheet_(det, { comma: [5, 6, 7, 8, 9, 10], pct: 11, id: 4 });
     return json_({ ok: true, saved: dates });
   } catch (err) {
     return json_({ ok: false, error: String(err) });
@@ -76,6 +79,16 @@ function upsertByDate_(sh, date, rows) {
 function sortByDate_(sh) {
   const last = sh.getLastRow();
   if (last > 2) sh.getRange(2, 1, last - 1, sh.getLastColumn()).sort({ column: 1, ascending: true });
+}
+
+// 숫자 서식 적용: comma=천단위, pct=백분율, id=구분자 없는 정수(등록상품ID)
+function formatSheet_(sh, spec) {
+  const last = sh.getLastRow();
+  if (last < 2) return;
+  const n = last - 1;
+  (spec.comma || []).forEach(function (c) { sh.getRange(2, c, n, 1).setNumberFormat('#,##0'); });
+  if (spec.pct) sh.getRange(2, spec.pct, n, 1).setNumberFormat('0.0%');
+  if (spec.id) sh.getRange(2, spec.id, n, 1).setNumberFormat('0');
 }
 
 function json_(o) {
