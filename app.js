@@ -250,10 +250,16 @@ function summaryRow(date, rows) {
     Math.round(s("adCost")), Math.round(s("marginBefore")), Math.round(net),
     settle > 0 ? +(net / settle).toFixed(4) : ""];
 }
+// 개당마진: 저장된 marginUnit 우선, 없으면(옛 누적본) 마진(광고전)÷수량으로 복원
+function muOf(r) {
+  if (isFinite(r.marginUnit)) return r.marginUnit;
+  return r.qty > 0 ? r.marginBefore / r.qty : NaN;
+}
+
 // 상세 rows → 시트/엑셀용 배열
 function detailRow(r) {
   const cpu = r.qty > 0 ? Math.round(r.adCost / r.qty) : "";      // 구매당비용(파생)
-  const mu = isFinite(r.marginUnit) ? Math.round(r.marginUnit) : ""; // 개당마진(저장)
+  const mu = isFinite(muOf(r)) ? Math.round(muOf(r)) : "";          // 개당마진
   return [r.date, r.group, r.name, r.regId, Math.round(r.qty), cpu, mu,
     Math.round(r.insightRev), Math.round(r.settleRev), Math.round(r.adCost),
     Math.round(r.marginBefore), Math.round(r.netProfit),
@@ -478,11 +484,11 @@ function renderResults() {
       if (k === "qty") return `<td>${won(r.qty)}</td>`;
       if (k === "costPerUnit") {
         if (!(r.qty > 0)) return `<td class="muted">-</td>`;
-        const cpu = r.adCost / r.qty;
-        const cls = isFinite(r.marginUnit) ? (cpu >= r.marginUnit ? "neg" : "pos") : "";
+        const cpu = r.adCost / r.qty, mu = muOf(r);
+        const cls = isFinite(mu) ? (cpu >= mu ? "neg" : "pos") : "";
         return `<td class="${cls}">${won(cpu)}</td>`;
       }
-      if (k === "marginUnit") return `<td>${isFinite(r.marginUnit) ? won(r.marginUnit) : "-"}</td>`;
+      if (k === "marginUnit") return `<td>${isFinite(muOf(r)) ? won(muOf(r)) : "-"}</td>`;
       if (money.has(k)) {
         const cls = k === "netProfit" ? (r.netProfit >= 0 ? "pos" : "neg") : "";
         return `<td class="${cls}">${won(r[k])}</td>`;
@@ -530,7 +536,7 @@ function downloadExcel() {
   const aoa = [header];
   for (const r of rows) {
     const cpu = r.qty > 0 ? Math.round(r.adCost / r.qty) : "";
-    const mu = isFinite(r.marginUnit) ? Math.round(r.marginUnit) : "";
+    const mu = isFinite(muOf(r)) ? Math.round(muOf(r)) : "";
     aoa.push([r.date, r.group, r.name, r.regId, r.qty, cpu, mu,
       Math.round(r.insightRev), Math.round(r.settleRev), Math.round(r.adCost),
       Math.round(r.marginBefore), Math.round(r.netProfit),
