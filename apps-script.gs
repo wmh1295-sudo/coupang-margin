@@ -19,7 +19,7 @@ const TOKEN = ''; // 예: 'mysecret123' (비워두면 토큰 검사 안 함)
 const SUMMARY_SHEET = '일별요약';
 const DETAIL_SHEET = '상세';
 const SUMMARY_HEADER = ['날짜', '판매수량', '인사이트매출', '정산매출', '사용광고비', '마진(광고전)', '순이익', '순이익률'];
-const DETAIL_HEADER = ['날짜', '상품구분', '상품명', '등록상품ID', '판매수량', '인사이트매출', '정산매출', '사용광고비', '마진(광고전)', '순이익', '순이익률'];
+const DETAIL_HEADER = ['날짜', '상품구분', '상품명', '등록상품ID', '판매수량', '구매당비용', '개당마진', '인사이트매출', '정산매출', '사용광고비', '마진(광고전)', '순이익', '순이익률'];
 
 function doGet() {
   return json_({ ok: true, service: 'coupang-margin' });
@@ -45,7 +45,7 @@ function doPost(e) {
     sortByDate_(det);
     // 숫자 서식(쉼표·%) 적용
     formatSheet_(sum, { comma: [2, 3, 4, 5, 6, 7], pct: 8 });
-    formatSheet_(det, { comma: [5, 6, 7, 8, 9, 10], pct: 11, id: 4 });
+    formatSheet_(det, { comma: [5, 6, 7, 8, 9, 10, 11, 12], pct: 13, id: 4 });
     return json_({ ok: true, saved: dates });
   } catch (err) {
     return json_({ ok: false, error: String(err) });

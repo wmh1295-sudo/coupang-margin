@@ -30,6 +30,8 @@ const COLUMN_DEFS = {
   name: "상품명\n· 마진표의 '등록 상품명'을 표시합니다. (없으면 인사이트 상품명)",
   regId: "등록상품ID\n· 쿠팡 등록상품ID. 세 파일(인사이트·광고·마진)을 연결하는 매칭 기준 키입니다.",
   qty: "판매수량\n· 인사이트의 옵션ID별 '판매량'을 등록상품ID 기준으로 합산한 값입니다.\n· = Σ 인사이트 판매량 (취소 반영된 순 판매량)",
+  costPerUnit: "구매당비용\n· 이 상품 1개를 팔기 위해 실제로 쓴 광고비입니다. (손익분기 판단용)\n· = 사용광고비 ÷ 판매수량\n· 개당마진보다 크면(빨강) 그 상품은 적자입니다.\n· 판매수량이 0이면 '-'로 표시합니다.",
+  marginUnit: "개당마진(손익분기)\n· 1개 팔 때 남는 마진, 곧 손익분기점입니다.\n· = 마진(광고전) ÷ 판매수량 (마진표의 개당마진)\n· 구매당비용이 이 값을 넘으면 적자입니다.",
   insightRev: "인사이트매출\n· 쿠팡 인사이트의 '매출(원)' 합계입니다. (판매가 기준 총매출)\n· = Σ 인사이트 매출(원)",
   settleRev: "정산매출\n· 쿠팡이 실제로 우리에게 정산해주는 금액 기준 매출입니다.\n· = 결제받는단가 × 판매수량",
   adCost: "사용광고비\n· 광고 리포트의 '광고비'를, 광고집행 옵션ID를 인사이트의 옵션ID→등록상품ID 매핑으로 상품에 붙여 합산한 값입니다.\n· = Σ 광고비 (해당 상품의 모든 광고옵션·캠페인)",
@@ -84,6 +86,7 @@ function parseResult(wb) {
     qty: colIndex(H, ["판매수량"]), insightRev: colIndex(H, ["인사이트매출"]),
     settleRev: colIndex(H, ["정산매출"]), adCost: colIndex(H, ["사용광고비"]),
     marginBefore: colIndex(H, ["마진(광고전)"]), netProfit: colIndex(H, ["순이익"]),
+    marginUnit: colIndex(H, ["개당마진"]),
   };
   const days = {};
   for (const r of s.rows) {
@@ -94,12 +97,16 @@ function parseResult(wb) {
     if (!days[ds]) days[ds] = { rows: [], soldNoMargin: [], unmappedAd: [] };
     const settleRev = num(r[ci.settleRev]);
     const netProfit = num(r[ci.netProfit]);
+    const qty = num(r[ci.qty]);
+    const marginBefore = num(r[ci.marginBefore]);
+    // 개당마진: 저장 컬럼 우선, 없으면(옛 파일) 마진(광고전)÷수량으로 복원
+    const marginUnit = ci.marginUnit >= 0 ? num(r[ci.marginUnit]) : (qty > 0 ? marginBefore / qty : NaN);
     days[ds].rows.push({
       date: ds, regId: idStr(r[ci.regId]),
       group: r[ci.group] || "", name: r[ci.name] || "",
-      qty: num(r[ci.qty]), insightRev: num(r[ci.insightRev]),
+      qty, insightRev: num(r[ci.insightRev]),
       settleRev, adCost: num(r[ci.adCost]),
-      marginBefore: num(r[ci.marginBefore]), netProfit,
+      marginBefore, marginUnit, netProfit,
       netRate: settleRev > 0 ? netProfit / settleRev : NaN,
     });
   }
@@ -217,6 +224,7 @@ function computeDay(date, marginMap, insight, adByOpt) {
       group: m.group || "",
       name: m.name || agg.name || "",
       qty, insightRev, settleRev, adCost, marginBefore, netProfit,
+      marginUnit: m.margin, // 개당마진(손익분기) — 판매수량 0이어도 유효
       netRate: settleRev > 0 ? netProfit / settleRev : NaN,
     });
   }
@@ -244,7 +252,9 @@ function summaryRow(date, rows) {
 }
 // 상세 rows → 시트/엑셀용 배열
 function detailRow(r) {
-  return [r.date, r.group, r.name, r.regId, Math.round(r.qty),
+  const cpu = r.qty > 0 ? Math.round(r.adCost / r.qty) : "";      // 구매당비용(파생)
+  const mu = isFinite(r.marginUnit) ? Math.round(r.marginUnit) : ""; // 개당마진(저장)
+  return [r.date, r.group, r.name, r.regId, Math.round(r.qty), cpu, mu,
     Math.round(r.insightRev), Math.round(r.settleRev), Math.round(r.adCost),
     Math.round(r.marginBefore), Math.round(r.netProfit),
     isFinite(r.netRate) ? +r.netRate.toFixed(4) : ""];
@@ -454,7 +464,8 @@ function renderResults() {
   // 테이블
   const cols = [
     ["날짜", "date"], ["상품구분", "group"], ["상품명", "name"], ["등록상품ID", "regId"],
-    ["판매수량", "qty"], ["인사이트매출", "insightRev"], ["정산매출", "settleRev"],
+    ["판매수량", "qty"], ["구매당비용", "costPerUnit"], ["개당마진", "marginUnit"],
+    ["인사이트매출", "insightRev"], ["정산매출", "settleRev"],
     ["사용광고비", "adCost"], ["마진(광고전)", "marginBefore"], ["순이익", "netProfit"], ["순이익률", "netRate"],
   ];
   const t = $("#resultTable");
@@ -465,6 +476,13 @@ function renderResults() {
     const tds = cols.map(([, k]) => {
       if (k === "netRate") return `<td>${pct(r.netRate)}</td>`;
       if (k === "qty") return `<td>${won(r.qty)}</td>`;
+      if (k === "costPerUnit") {
+        if (!(r.qty > 0)) return `<td class="muted">-</td>`;
+        const cpu = r.adCost / r.qty;
+        const cls = isFinite(r.marginUnit) ? (cpu >= r.marginUnit ? "neg" : "pos") : "";
+        return `<td class="${cls}">${won(cpu)}</td>`;
+      }
+      if (k === "marginUnit") return `<td>${isFinite(r.marginUnit) ? won(r.marginUnit) : "-"}</td>`;
       if (money.has(k)) {
         const cls = k === "netProfit" ? (r.netProfit >= 0 ? "pos" : "neg") : "";
         return `<td class="${cls}">${won(r[k])}</td>`;
@@ -477,11 +495,19 @@ function renderResults() {
   // 합계
   const sum = (k) => allRows.reduce((s, r) => s + (r[k] || 0), 0);
   const totNet = sum("netProfit"), totSettle = sum("settleRev");
+  const totQty = sum("qty");
   const totalCells = cols.map(([, k]) => {
     if (k === "date") return `<td>합계 (${dates.length}일)</td>`;
     if (k === "group" || k === "name" || k === "regId") return `<td></td>`;
     if (k === "netRate") return `<td>${pct(totSettle > 0 ? totNet / totSettle : NaN)}</td>`;
-    if (k === "qty") return `<td>${won(sum("qty"))}</td>`;
+    if (k === "qty") return `<td>${won(totQty)}</td>`;
+    if (k === "costPerUnit") {
+      if (!(totQty > 0)) return `<td class="muted">-</td>`;
+      const cpu = sum("adCost") / totQty, mu = sum("marginBefore") / totQty;
+      const cls = cpu >= mu ? "neg" : "pos";
+      return `<td class="${cls}">${won(cpu)}</td>`;
+    }
+    if (k === "marginUnit") return `<td>${totQty > 0 ? won(sum("marginBefore") / totQty) : "-"}</td>`;
     const cls = k === "netProfit" ? (totNet >= 0 ? "pos" : "neg") : "";
     return `<td class="${cls}">${won(sum(k))}</td>`;
   }).join("");
@@ -499,28 +525,31 @@ function downloadExcel() {
   for (const d of dates) rows = rows.concat(days[d].rows || []);
   rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.settleRev - a.settleRev));
 
-  const header = ["날짜", "상품구분", "상품명", "등록상품ID", "판매수량",
+  const header = ["날짜", "상품구분", "상품명", "등록상품ID", "판매수량", "구매당비용", "개당마진",
     "인사이트매출", "정산매출", "사용광고비", "마진(광고전)", "순이익", "순이익률"];
   const aoa = [header];
   for (const r of rows) {
-    aoa.push([r.date, r.group, r.name, r.regId, r.qty,
+    const cpu = r.qty > 0 ? Math.round(r.adCost / r.qty) : "";
+    const mu = isFinite(r.marginUnit) ? Math.round(r.marginUnit) : "";
+    aoa.push([r.date, r.group, r.name, r.regId, r.qty, cpu, mu,
       Math.round(r.insightRev), Math.round(r.settleRev), Math.round(r.adCost),
       Math.round(r.marginBefore), Math.round(r.netProfit),
       isFinite(r.netRate) ? +(r.netRate).toFixed(4) : ""]);
   }
   const sum = (k) => rows.reduce((s, r) => s + (r[k] || 0), 0);
-  const tNet = sum("netProfit"), tSettle = sum("settleRev");
-  aoa.push(["합계", "", "", "", sum("qty"),
+  const tNet = sum("netProfit"), tSettle = sum("settleRev"), tQty = sum("qty");
+  aoa.push(["합계", "", "", "", tQty,
+    tQty > 0 ? Math.round(sum("adCost") / tQty) : "", tQty > 0 ? Math.round(sum("marginBefore") / tQty) : "",
     Math.round(sum("insightRev")), Math.round(tSettle), Math.round(sum("adCost")),
     Math.round(sum("marginBefore")), Math.round(tNet),
     tSettle > 0 ? +(tNet / tSettle).toFixed(4) : ""]);
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 11 }, { wch: 12 }, { wch: 34 }, { wch: 13 }, { wch: 9 },
+  ws["!cols"] = [{ wch: 11 }, { wch: 12 }, { wch: 34 }, { wch: 13 }, { wch: 9 }, { wch: 11 }, { wch: 11 },
     { wch: 13 }, { wch: 13 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 9 }];
 
   // 헤더 셀(1행)에 정의·계산식 메모 삽입 — 엑셀에서 셀에 마우스 올리면 표시
-  const keysByCol = ["date", "group", "name", "regId", "qty",
+  const keysByCol = ["date", "group", "name", "regId", "qty", "costPerUnit", "marginUnit",
     "insightRev", "settleRev", "adCost", "marginBefore", "netProfit", "netRate"];
   keysByCol.forEach((k, c) => {
     const addr = XLSX.utils.encode_cell({ r: 0, c });
@@ -528,14 +557,14 @@ function downloadExcel() {
     ws[addr].c = [{ a: "계산기", t: COLUMN_DEFS[k] || "" }];
     ws[addr].c.hidden = true;
   });
-  // 숫자 서식
+  // 숫자 서식 (구매당비용~순이익 = 열 5~11, 순이익률 = 열 12)
   const range = XLSX.utils.decode_range(ws["!ref"]);
   for (let R = 1; R <= range.e.r; R++) {
-    for (let C = 5; C <= 9; C++) {
+    for (let C = 5; C <= 11; C++) {
       const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
       if (cell && typeof cell.v === "number") cell.z = "#,##0";
     }
-    const pc = ws[XLSX.utils.encode_cell({ r: R, c: 10 })];
+    const pc = ws[XLSX.utils.encode_cell({ r: R, c: 12 })];
     if (pc && typeof pc.v === "number") pc.z = "0.0%";
   }
   // 일별요약 시트
@@ -569,6 +598,7 @@ function downloadExcel() {
 function renderLegend() {
   const labels = {
     date: "날짜", group: "상품구분", name: "상품명", regId: "등록상품ID", qty: "판매수량",
+    costPerUnit: "구매당비용", marginUnit: "개당마진",
     insightRev: "인사이트매출", settleRev: "정산매출", adCost: "사용광고비",
     marginBefore: "마진(광고전)", netProfit: "순이익", netRate: "순이익률",
   };
