@@ -397,47 +397,99 @@ function renderStaged() {
   box.querySelectorAll(".x").forEach((x) =>
     x.addEventListener("click", () => { staged.splice(+x.dataset.i, 1); renderStaged(); }));
 
-  const ins = staged.find((s) => s.kind === "insight");
-  const ad = staged.find((s) => s.kind === "ad");
+  const insights = staged.filter((s) => s.kind === "insight");
+  const ads = staged.filter((s) => s.kind === "ad");
   const dateEl = $("#dateLabel");
-  let date = ad ? dateFromName(ad.file.name) : null;
-  if (date) { dateEl.hidden = false; dateEl.textContent = `날짜: ${date}`; }
+  const adDates = [...new Set(ads.map((s) => dateFromName(s.file.name)).filter(Boolean))].sort();
+  if (adDates.length === 1) { dateEl.hidden = false; dateEl.textContent = `날짜: ${adDates[0]}`; }
+  else if (adDates.length > 1) { dateEl.hidden = false; dateEl.textContent = `${adDates.length}일치: ${adDates[0]} ~ ${adDates[adDates.length - 1]}`; }
   else dateEl.hidden = true;
 
-  $("#calcBtn").disabled = !(ins && ad && marginState && marginState.map);
+  $("#calcBtn").disabled = !(insights.length && ads.length && marginState && marginState.map);
+}
+
+// 올린 파일들을 (날짜별) 인사이트+광고 쌍으로 묶는다.
+// 하루치면 기존처럼 날짜 직접 입력 폴백을 지원하고,
+// 여러 날치면 파일명 날짜로 인사이트와 광고를 짝지어 각 날짜를 모두 계산한다.
+function buildJobs(insights, ads) {
+  const jobs = [];       // {date, insFile, adFile}
+  const unpaired = [];   // 짝짓지 못한 파일 설명
+
+  if (insights.length === 1 && ads.length === 1) {
+    const date = dateFromName(ads[0].file.name) || dateFromName(insights[0].file.name) ||
+      prompt("파일명에서 날짜를 찾지 못했습니다. 날짜를 입력하세요 (YYYY-MM-DD):", "");
+    if (date) jobs.push({ date, insFile: insights[0], adFile: ads[0] });
+    return { jobs, unpaired };
+  }
+
+  const insByDate = {};
+  for (const s of insights) {
+    const d = dateFromName(s.file.name);
+    if (d) insByDate[d] = s;
+    else unpaired.push(`${s.file.name} — 파일명에서 날짜를 못 읽음`);
+  }
+  const usedDates = new Set();
+  for (const ad of ads) {
+    const d = dateFromName(ad.file.name);
+    if (!d) { unpaired.push(`${ad.file.name} — 파일명에서 날짜를 못 읽음`); continue; }
+    const ins = insByDate[d];
+    if (!ins) { unpaired.push(`${ad.file.name} — 같은 날짜(${d}) 인사이트 파일 없음`); continue; }
+    usedDates.add(d);
+    jobs.push({ date: d, insFile: ins, adFile: ad });
+  }
+  for (const d in insByDate) {
+    if (!usedDates.has(d)) unpaired.push(`${insByDate[d].file.name} — 같은 날짜(${d}) 광고 파일 없음`);
+  }
+  return { jobs, unpaired };
 }
 
 function calculate() {
-  const insFile = staged.find((s) => s.kind === "insight");
-  const adFile = staged.find((s) => s.kind === "ad");
-  if (!insFile || !adFile) { alert("인사이트와 광고 리포트 파일이 모두 필요합니다."); return; }
+  const insights = staged.filter((s) => s.kind === "insight");
+  const ads = staged.filter((s) => s.kind === "ad");
+  if (!insights.length || !ads.length) { alert("인사이트와 광고 리포트 파일이 모두 필요합니다."); return; }
   if (!marginState || !marginState.map) { alert("먼저 마진표를 올려주세요."); return; }
 
-  let date = dateFromName(adFile.file.name) || dateFromName(insFile.file.name) ||
-    prompt("파일명에서 날짜를 찾지 못했습니다. 날짜를 입력하세요 (YYYY-MM-DD):", "");
-  if (!date) return;
+  const { jobs, unpaired } = buildJobs(insights, ads);
+  if (!jobs.length) {
+    alert("계산할 날짜 쌍을 만들지 못했습니다.\n\n" + (unpaired.join("\n") || "인사이트와 광고 파일을 확인하세요."));
+    return;
+  }
 
-  let insight, adByOpt;
-  try { insight = parseInsight(insFile.wb); adByOpt = parseAd(adFile.wb); }
-  catch (e) { alert("계산 오류: " + e.message); return; }
-
-  const res = computeDay(date, marginState.map, insight, adByOpt);
-
-  // 누적 저장
   const days = loadDays();
-  days[date] = res;
+  const doneDates = [];
+  const errors = [];
+  for (const job of jobs) {
+    try {
+      const insight = parseInsight(job.insFile.wb);
+      const adByOpt = parseAd(job.adFile.wb);
+      days[job.date] = computeDay(job.date, marginState.map, insight, adByOpt);
+      doneDates.push(job.date);
+    } catch (e) {
+      errors.push(`${job.date}: ${e.message}`);
+    }
+  }
   saveDays(days);
 
   staged = [];
   renderStaged();
   renderResults();
 
-  // 구글시트 자동 저장
+  // 안내: 짝짓지 못했거나 오류난 파일이 있으면 알려준다
+  if (unpaired.length || errors.length) {
+    let msg = doneDates.length ? `${doneDates.length}일치 계산·누적 완료 (${doneDates.slice().sort().join(", ")})\n` : "";
+    if (unpaired.length) msg += `\n⚠️ 짝짓지 못해 건너뛴 파일:\n- ${unpaired.join("\n- ")}`;
+    if (errors.length) msg += `\n\n⚠️ 계산 오류:\n- ${errors.join("\n- ")}`;
+    alert(msg.trim());
+  }
+
+  // 구글시트 자동 저장 (계산된 모든 날짜)
   const cfg = loadGSheet();
-  if (cfg && cfg.url && cfg.auto) {
-    setGMsg(`구글시트로 ${date} 전송 중...`);
-    pushToSheet({ [date]: res }).then((r) => {
-      setGMsg(r.ok ? `구글시트에 ${date} 저장 요청 완료. 시트에서 확인하세요.` : `구글시트 전송 실패: ${r.reason}`);
+  if (cfg && cfg.url && cfg.auto && doneDates.length) {
+    const payload = {};
+    for (const d of doneDates) payload[d] = days[d];
+    setGMsg(`구글시트로 ${doneDates.length}일치 전송 중...`);
+    pushToSheet(payload).then((r) => {
+      setGMsg(r.ok ? `구글시트에 ${doneDates.length}일치 저장 요청 완료. 시트에서 확인하세요.` : `구글시트 전송 실패: ${r.reason}`);
     });
   }
 }
