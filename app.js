@@ -276,10 +276,25 @@ function loadMargin() {
 function saveMargin(map, meta) {
   localStorage.setItem(LS_MARGIN, JSON.stringify({ map, meta }));
 }
+// 누적 데이터는 메모리에도 유지한다. localStorage 저장이 실패(용량 초과)해도
+// 이번 세션의 결과 렌더링·엑셀 다운로드는 정상 동작하게 하기 위함.
+let daysCache = null;
 function loadDays() {
-  try { return JSON.parse(localStorage.getItem(LS_DAYS) || "{}"); } catch { return {}; }
+  if (daysCache) return daysCache;
+  try { daysCache = JSON.parse(localStorage.getItem(LS_DAYS) || "{}"); } catch { daysCache = {}; }
+  return daysCache;
 }
-function saveDays(days) { localStorage.setItem(LS_DAYS, JSON.stringify(days)); }
+function saveDays(days) {
+  daysCache = days; // 항상 메모리에 반영
+  try {
+    localStorage.setItem(LS_DAYS, JSON.stringify(days));
+  } catch (e) {
+    // QuotaExceededError 등: 저장은 못 해도 계산·다운로드는 계속되게 한다
+    alert("누적 데이터가 브라우저 저장 한도를 초과해 이번 결과가 브라우저에 기억되지 않았습니다.\n" +
+      "계산과 엑셀 다운로드는 정상 동작합니다. 다만 페이지를 새로고침하면 누적 기록이 사라질 수 있으니,\n" +
+      "지금 엑셀로 다운로드해 두거나 구글시트 저장을 이용하세요.");
+  }
+}
 function loadGSheet() {
   try { return JSON.parse(localStorage.getItem(LS_GSHEET) || "null"); } catch { return null; }
 }
@@ -685,7 +700,7 @@ function init() {
   $("#downloadBtn").addEventListener("click", downloadExcel);
   $("#clearAllBtn").addEventListener("click", () => {
     if (!confirm("누적된 모든 날짜 결과를 지울까요? (마진표는 유지됩니다)")) return;
-    localStorage.removeItem(LS_DAYS); renderResults();
+    localStorage.removeItem(LS_DAYS); daysCache = {}; renderResults();
   });
 }
 init();
